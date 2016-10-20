@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 from datetime import datetime, timedelta
 from pymongo import MongoClient
-from newsFunc import getArticles
+import newsFunc
 import urlparse
 import feedparser
 import sys
@@ -8,7 +9,7 @@ reload(sys)
 sys.setdefaultencoding('utf-8')
 
 if len(sys.argv) != 2:
-    print "error"
+    print "argument error"
     sys.exit()
 
 S_TYPE = sys.argv[1]
@@ -22,7 +23,7 @@ elif S_TYPE.upper()=="DAUM":
     RSS_SOURCE = S_TYPE.upper()
     RSS_DATE_FORMAT = '%a, %d %b %Y %H:%M:%S %Z'
 else:
-    print "error"
+    print "type error"
     sys.exit()
 
 SYS_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -51,8 +52,9 @@ for post in parsed_rss.entries:
     })
 
     if find_rows.count()==0:
-        post_article = getArticles(post.link)
-        print RSS_SOURCE + " insert : " + post.title + " : " + formatted_date + " : " + str(len(post_article["text"]))
+        post_article = newsFunc.getArticles(post.link)
+        print RSS_SOURCE + " insert : " + post.title + " : " + formatted_date + " : " + post_article["source"] + "(" + str(len(post_article["text"])) + ")"
+
         db.newsCollection.insert_one({
             'url': post_article["link"],
             'title': post.title,
