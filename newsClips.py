@@ -1,73 +1,109 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime, timedelta
-from pymongo import MongoClient
-import newsFunc
+import urllib2
+from goose import Goose
+from goose.text import StopWordsKorean
+import newspaper
+from bs4 import BeautifulSoup
 import urlparse
-import feedparser
-import sys
-reload(sys)
-sys.setdefaultencoding('utf-8')
 
-if len(sys.argv) != 2:
-    print "argument error"
-    sys.exit()
+# 본문 수집 메서드
+def getArticles(url):
+    resultMap = {
+        "goose": getArticlesByGoose,
+        "newspaper": getArticlesByNewspaper,
+        "beautifulsoup": getArticlesBySoup
+    }
+    # url의 url형식(파라미터)일경우의 처리 (구글case)
+    parsed = urlparse.urlparse(url)
+    if url.rfind('url')!=-1: url = urlparse.parse_qs(parsed.query)['url'][0]
 
-S_TYPE = sys.argv[1]
+    # 각 수집메서드에 대해 iteration함(정상적으로 수집됐다 판단되면 break)
+    for key in resultMap:
+        returnVal = resultMap.get(key)(url)
+        returnVal['source'] = key
+        if isWellClipped(returnVal): break
 
-if S_TYPE.upper()=="GOOGLE":
-    RSS_URL = 'https://news.google.co.kr/news?cf=all&hl=ko&pz=1&ned=kr&output=rss'
-    RSS_SOURCE = S_TYPE.upper()
-    RSS_DATE_FORMAT = '%a, %d %b %Y %H:%M:%S %Z'
-elif S_TYPE.upper()=="DAUM":
-    RSS_URL = 'http://media.daum.net/rss/today/primary/all/rss2.xml'
-    RSS_SOURCE = S_TYPE.upper()
-    RSS_DATE_FORMAT = '%a, %d %b %Y %H:%M:%S %Z'
-else:
-    print "type error"
-    sys.exit()
+    return returnVal
 
-SYS_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
-
-#pymongo init
-client = MongoClient('ds061076.mlab.com', 61076)
-db = client["kein-db"]
-db.authenticate('db_user', '1', source='kein-db')
-
-#rss init
-parsed_rss = feedparser.parse(RSS_URL)
-rss_reg_date = datetime.strptime(parsed_rss.feed.published, RSS_DATE_FORMAT)
-rss_reg_date = (rss_reg_date + timedelta(hours=9)).strftime(SYS_DATE_FORMAT)
-current_date = datetime.now()
-
-print current_date.strftime(SYS_DATE_FORMAT)
-
-for post in parsed_rss.entries:
-    str_to_date = datetime.strptime(str(post.published), RSS_DATE_FORMAT)
-    formatted_date = (str_to_date + timedelta(hours=9)).strftime(SYS_DATE_FORMAT)
-
-    find_rows = db.newsCollection.find({
-        "rss_date": {"$gte": (current_date + timedelta(days=-1)).strftime(SYS_DATE_FORMAT)},
-        "source": RSS_SOURCE,
-        "title": post.title
-    })
-
-    if find_rows.count()==0:
-        post_article = newsFunc.getArticles(post.link)
-        print RSS_SOURCE + " insert : " + post.title + " : " + formatted_date + " : " + post_article["source"] + "(" + str(len(post_article["text"])) + ")"
-
-        db.newsCollection.insert_one({
-            'url': post_article["link"],
-            'title': post.title,
-            'contents': post_article["text"],
-            'image': post_article["image"],
-            'date': formatted_date,
-            'rss_date': rss_reg_date,
-            'source': RSS_SOURCE
-        })
+# 줄수정 관련 메서드
+def replaceLine(text):
+    if isinstance(text, str):
+        return text.replace("\n\n", "\n")
     else:
-        for row in find_rows:
-            print RSS_SOURCE + " duplicate : " + post.title + " : " + str(row["_id"])
-            # 중복된 뉴스에 대해 충돌횟수 log 남김
-            db.newsDuplCollection.update({"_id": row["_id"]}, {"$inc": {"count": 1}}, True)
+        return text
 
-print "\n"
+# 제대로 수집했는지 체크
+def isWellClipped(article, CONDITION=20):
+    if article is None or article["text"] is None: return False
+    if len(article["text"])>CONDITION: return True
+    else: return False
+
+# Goose를 이용하여 본문 수집
+def getArticlesByGoose(url):
+    g = Goose({'stopwords_class': StopWordsKorean})
+    article = g.extract(url=url)
+
+    try:
+        image_src = article.top_image.src
+    except AttributeError as e:
+        image_src = None
+
+    text_val = replaceLine(article.cleaned_text)
+
+    returnVal = {
+        "link": url,
+        "text": text_val,
+        "image": image_src
+    }
+
+    return returnVal
+
+# newspaper를 이용하여 본문 수집
+def getArticlesByNewspaper(url):
+    article = newspaper.Article(url)
+    article.download()
+    article.parse()
+    
+    returnVal = {
+        "link": url,
+        "text": replaceLine(article.text),
+        "image": article.top_image
+    }
+    return returnVal
+
+# soup를 이용하여 본문 수집
+def getArticlesBySoup(url):
+    try:
+        opener = urllib2.build_opener()
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 5.1; rv:10.0.1) Gecko/20100101 Firefox/10.0.1'}
+        opener.addheaders = headers.items()
+
+        res = opener.open(url)
+        source = res.read()
+    except IOError as e:
+        print "IOError : " + url + "\n" + str(e)
+        return None
+    except TypeError as e:
+        print "TypeError : " + url + "\n" + str(e)
+        return None
+
+    soup = BeautifulSoup(source)
+    selectMap = {
+        "join": soup.find(attrs={'class': 'article_body'}),
+        "zdnet": soup.find(id='content')
+    }
+
+    for key in selectMap:
+        div = selectMap.get(key)
+        if div: break
+
+    for br in div.find_all("br"):
+        br.replace_with("\n")
+
+    returnText = div.text
+    returnVal = {
+        "link": url,
+        "text": replaceLine(returnText),
+        "image": None
+    }
+    return returnVal
