@@ -46,7 +46,7 @@ for post in parsed_rss.entries:
     formatted_date = (str_to_date + timedelta(hours=9)).strftime(SYS_DATE_FORMAT)
 
     find_rows = db.newsCollection.find({
-        "rss_date": {"$gte": (current_date + timedelta(hours=-1)).strftime(SYS_DATE_FORMAT)},
+        "rss_date": {"$gte": (current_date + timedelta(days=-1)).strftime(SYS_DATE_FORMAT)},
         "source": RSS_SOURCE,
         "title": post.title
     })
@@ -67,7 +67,7 @@ for post in parsed_rss.entries:
     else:
         for row in find_rows:
             print RSS_SOURCE + " duplicate : " + post.title + " : " + str(row["_id"])
-            # count duplicate news
+            # 중복된 뉴스에 대해 충돌횟수 log 남김
             db.newsDuplCollection.update({"_id": row["_id"]}, {"$inc": {"count": 1}}, True)
 
 print "\n"

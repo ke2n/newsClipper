@@ -13,10 +13,11 @@ def getArticles(url):
         "newspaper": getArticlesByNewspaper,
         "beautifulsoup": getArticlesBySoup
     }
+    # url의 url형식(파라미터)일경우의 처리 (구글case)
     parsed = urlparse.urlparse(url)
-
     if url.rfind('url')!=-1: url = urlparse.parse_qs(parsed.query)['url'][0]
 
+    # 각 수집메서드에 대해 iteration함(정상적으로 수집됐다 판단되면 break)
     for key in resultMap:
         returnVal = resultMap.get(key)(url)
         returnVal['source'] = key
